@@ -1,28 +1,723 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>thepdfwebsite.com</title>
-</head>
-<body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The PDF Website — LaTeX-style Viewer</title>
     <style>
-        .body {
-            margin: 0;
-            padding: 0;
-        }
+      :root {
+        /* Light gray “desk” like macOS Preview — tweak to taste */
+        --viewer-bg: #909090;
+        --outline: #edf1f4;
+        --toolbar-h: 56px;
 
-        .title {
-            display: flex;
-            justify-content: center;
-        }
+        --paper: #ffffff;
+        --ink: #111;
+        --page-gap: 18px;
+        --page-w: 794px;
+        --page-h: 1123px;
+        /* space between pages */
+      }
 
-        .link {
-            display: flex;
-            justify-content: center;
-        }
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--viewer-bg);
+        color: #222;
+        font-family: "Times New Roman", Times, serif;
+        overflow: hidden;
+        /* scroll happens inside the viewer */
+      }
+
+      /* ===== Toolbar (light, mac-ish) ===== */
+      .toolbar {
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: var(--toolbar-h);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.96),
+          rgba(255, 255, 255, 0.86)
+        );
+        color: #222;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        z-index: 10;
+      }
+
+      .spacer {
+        flex: 1;
+      }
+
+      .btn,
+      .pct {
+        height: 36px;
+        border-radius: 8px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        background: linear-gradient(180deg, #fff, #f6f6f6);
+        color: #222;
+        padding: 0 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        user-select: none;
+        cursor: pointer;
+      }
+
+      .btn:hover,
+      .pct:hover {
+        background: #f9f9f9;
+      }
+
+      .btn:active {
+        transform: translateY(1px);
+      }
+
+      .pct {
+        min-width: 84px;
+        justify-content: center;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .range {
+        -webkit-appearance: none;
+        width: 220px;
+        height: 4px;
+        border-radius: 999px;
+        background: #c8c8c8;
+        outline: none;
+        cursor: pointer;
+        padding: 0;
+      }
+
+      .range::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #666;
+        border: 1px solid #bbb;
+      }
+
+      /* ===== Viewer ===== */
+      .viewer {
+        position: absolute;
+        inset: 0; /* was: inset: var(--toolbar-h) 0 0 0; */
+        overflow: auto;
+        display: grid;
+        place-items: start center;
+        padding: 12px; /* was 24px — smaller padding = more room = bigger page */
+      }
+
+      /* ===== Document sizing & scaling ===== */
+      .sizer {
+        position: relative;
+      }
+
+      .doc {
+        position: absolute;
+        inset: 0 auto auto 0;
+        /* anchor top-left */
+        width: 794px;
+        /* A4-ish @ ~96dpi */
+        height: 0;
+        /* set via JS */
+        transform-origin: top left;
+      }
+
+      /* ===== Page chrome ===== */
+      .page {
+        position: absolute;
+        left: 0;
+        width: var(--page-w);
+        height: var(--page-h);
+        background: var(--paper);
+        color: var(--ink);
+        border: 1px solid var(--outline);
+        box-shadow: 0 6px 28px rgba(0, 0, 0, 0.22);
+        /* soft, natural shadow */
+        overflow: hidden;
+      }
+
+      /* “1 inch” margins (≈96px) */
+      .page-inner {
+        padding: 96px;
+      }
+
+      /* Title page helpers */
+      .page.titlepage .page-inner {
+        position: relative;
+        padding: 0; /* full page canvas, like TeX */
+      }
+
+      /* Position the title line at ~40% of the page height */
+      .titlepage .title-line {
+        position: absolute;
+        left: 50%;
+        top: calc(var(--page-h) * 0.4); /* try 0.38–0.45 to nudge */
+        transform: translate(-50%, -50%); /* center on that line */
+        font-family: "Times New Roman", "STIX Two Text", "Latin Modern Roman",
+          "Computer Modern", serif;
+        font-size: 14pt; /* adjust to match your PDF */
+        font-weight: 700;
+        color: #111;
+        white-space: nowrap;
+        letter-spacing: 0.2px; /* subtle TeX-ish feel */
+      }
+
+      /* ===== LaTeX-like typography ===== */
+      .title,
+      .subtitle,
+      .section,
+      .paragraph,
+      .toc,
+      li,
+      table,
+      td,
+      th {
+        font-family: "Times New Roman", "STIX Two Text", "Latin Modern Roman",
+          "Computer Modern", serif;
+        color: #111;
+      }
+
+      .title {
+        font-size: 24pt;
+        line-height: 1.15;
+        text-align: center;
+        margin: 0 0 10pt;
+        font-weight: 700;
+      }
+
+      .subtitle {
+        text-align: center;
+        font-size: 12pt;
+        margin: 0 0 30pt;
+        color: #333;
+      }
+
+      .section {
+        font-size: 14pt;
+        font-weight: 700;
+        margin: 18pt 0 6pt;
+      }
+
+      p {
+        margin: 0 0 8pt;
+      }
+
+      .contents-title {
+        font-size: 12pt;
+        font-weight: 700;
+        margin: 0 0 6pt;
+      }
+
+      /* TOC: blue link, invisible leader, page # pinned to far right */
+      /* --- Table of Contents: title on the left, page number flush-right --- */
+      .toc {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 12pt;
+      }
+      .toc li {
+        margin: 0 0 6pt;
+      }
+
+      .toc li > a {
+        display: grid;
+        grid-template-columns: 1fr auto; /* left column grows, right column hugs content */
+        align-items: baseline;
+        gap: 12px;
+        color: #1a73e8; /* blue link */
+        text-decoration: none;
+      }
+
+      .toc li > a:hover {
+        text-decoration: underline;
+      }
+
+      /* Title column: keep on one visual line and clip with … if too long */
+      .toc .toc-text {
+        min-width: 0; /* allow grid child to shrink */
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis; /* optional; remove if you want wrapping */
+      }
+
+      /* Page number: pinned to the far right, never wraps */
+      .toc .page-num {
+        justify-self: end;
+        white-space: nowrap;
+      }
+
+      /* ===== Floating HUD (matches macOS Preview style) ===== */
+      .hud {
+        position: fixed;
+        left: 50%;
+        bottom: 18px;
+        transform: translate(-50%, 8px);
+        background: rgba(36, 36, 36, 0.92);
+        border-radius: 20px;
+        padding: 8px 10px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease, transform 0.18s ease;
+        z-index: 20;
+      }
+      .hud.show {
+        opacity: 1;
+        transform: translate(-50%, 0);
+        pointer-events: auto;
+      }
+
+      .hud-divider {
+        width: 1px;
+        height: 28px;
+        background: rgba(255, 255, 255, 0.28);
+        margin: 0 4px;
+        border-radius: 1px;
+      }
+
+      .hud-btn {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        background: transparent;
+        border: none;
+        outline: none;
+        border-radius: 12px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .hud-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .hud-btn:active {
+        transform: translateY(1px);
+      }
+
+      /* Icon stroke look */
+      .hud-btn svg {
+        width: 26px;
+        height: 26px;
+        fill: none;
+        stroke: #d7d7d7;
+        stroke-width: 2.1;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
     </style>
-    <h1 class="title">Welcome to The PDF Website!</h1>
-    <p class="link"><a href="ThePDFWebsite.pdf">Click here to get started</a></p>
-</body>
+  </head>
+
+  <body>
+    <!-- ===== Viewer ===== -->
+    <div class="viewer" id="viewer">
+      <div class="sizer" id="sizer" style="width: 794px; height: 1123px">
+        <div class="doc" id="doc">
+          <!-- ===== Page 1 ===== -->
+          <section class="page titlepage" style="top: 0">
+            <div class="page-inner">
+              <div class="title-line">Welcome to The PDF Website!</div>
+            </div>
+          </section>
+
+          <!-- ===== Page 2 ===== -->
+          <section class="page" style="top: calc(1123px + var(--page-gap))">
+            <div class="page-inner">
+              <div class="contents-title"><h1>Contents</h1></div>
+              <ul class="toc">
+                <li>
+                  <a href="#welcome-sec">
+                    <span class="toc-text">Welcome to The PDF Website!</span>
+                    <span class="page-num">2</span>
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ===== Page 3 ===== -->
+          <section
+            class="page"
+            style="top: calc(2 * 1123px + 2 * var(--page-gap))"
+          >
+            <div class="page-inner">
+              <div class="contents-title">
+                <h1>Welcome to The PDF Website!</h1>
+              </div>
+
+              <p class="paragraph">
+                This is not your standard website. It is hosted on a single
+                <code>index.html</code> file, however when clicking on the first
+                link of the website, you will be directed to a PDF document,
+                (this PDF document). You can navigate through the website by
+                using the links within the PDF that take you to new PDF’s and if
+                you would like to return to this main PDF, or the main
+                <code>index.html</code> page, you can navigate towards any page
+                where the link to both will be provided on the bottom of the
+                page.
+              </p>
+
+              <p class="paragraph">
+                Naturally, just like any PDF, you can print each page out if you
+                like, and own a physical copy of the website (not that you can
+                use it again in the browser physically).
+              </p>
+
+              <p class="paragraph">
+                The concept for this website came from that idea that links can
+                be added to PDF documents, which users can click on to be
+                redirected to a website. Here the PDF documents link to each
+                other, and to the one hosting <code>index.html</code> page.
+              </p>
+
+              <p class="paragraph">
+                All of these PDFs were created via the use of
+                <strong>LaTeX</strong>, a document preparation system used for
+                the communication and publication of scientific documents.
+                Although nothing “scientific” is within the website, the concept
+                is a novice one.
+              </p>
+
+              <p class="paragraph">
+                The website will also contain ads in the form of .png images or
+                .gif.
+              </p>
+
+              <p class="paragraph">
+                You can access the main <code>index.html</code> page here:
+                <a href="index.html" class="url">The main page</a><br />
+              </p>
+              <p class="paragraph">
+                You can access the main PDF page here:
+                <a href="ThePDFWebsite.pdf" class="url">The PDF Website</a>
+              </p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating PDF-like HUD (bottom center) -->
+    <div
+      class="hud"
+      id="hud"
+      data-download-url="ThePDFWebsite.pdf"
+      role="toolbar"
+      aria-label="Quick PDF actions"
+    >
+      <button
+        class="hud-btn"
+        id="hudZoomOut"
+        title="Zoom out"
+        aria-label="Zoom out"
+      >
+        <!-- magnifier minus -->
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10" cy="10" r="6"></circle>
+          <line x1="14.5" y1="14.5" x2="21" y2="21"></line>
+          <line x1="7" y1="10" x2="13" y2="10"></line>
+        </svg>
+      </button>
+
+      <button
+        class="hud-btn"
+        id="hudZoomIn"
+        title="Zoom in"
+        aria-label="Zoom in"
+      >
+        <!-- magnifier plus -->
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10" cy="10" r="6"></circle>
+          <line x1="14.5" y1="14.5" x2="21" y2="21"></line>
+          <line x1="7" y1="10" x2="13" y2="10"></line>
+          <line x1="10" y1="7" x2="10" y2="13"></line>
+        </svg>
+      </button>
+
+      <div class="hud-divider" aria-hidden="true"></div>
+
+      <button
+        class="hud-btn"
+        id="hudPrint"
+        title="Preview / Print"
+        aria-label="Preview or Print"
+      >
+        <!-- “Preview/Markup”-style icon: page with a small stamp -->
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="4" width="16" height="14" rx="2" ry="2"></rect>
+          <path d="M12 14.5v2.5"></path>
+          <rect x="9.5" y="17" width="5" height="3" rx="1.2" ry="1.2"></rect>
+        </svg>
+      </button>
+
+      <a
+        class="hud-btn"
+        id="hudDownload"
+        title="Download"
+        aria-label="Download"
+        href="ThePDFWebsite.pdf"
+        download
+      >
+        <!-- download in a circle -->
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 7v7"></path>
+          <path d="M8.5 12.5L12 15.5 15.5 12.5"></path>
+        </svg>
+      </a>
+    </div>
+
+    <script>
+      (() => {
+        // ===== Page geometry (CSS px) =====
+        const PAGE_W = 794;
+        const PAGE_H = 1123;
+
+        // Read gap from CSS variable --page-gap (fallback 18px)
+        const cssGap =
+          getComputedStyle(document.documentElement).getPropertyValue(
+            "--page-gap"
+          ) || "18px";
+        const GAP = parseFloat(cssGap) || 18;
+
+        // Count pages from the DOM so it never goes out of sync
+        const PAGES = document.querySelectorAll(".page").length;
+
+        // ===== Elements =====
+        const viewer = document.getElementById("viewer");
+        const sizer = document.getElementById("sizer");
+        const docEl = document.getElementById("doc");
+        const zoomPctEl = document.getElementById("zoomPct");
+        const zoomRange = document.getElementById("zoomRange");
+        const zoomInBtn = document.getElementById("zoomInBtn");
+        const zoomOutBtn = document.getElementById("zoomOutBtn");
+        const fitWidthBtn = document.getElementById("fitWidthBtn");
+        const fitPageBtn = document.getElementById("fitPageBtn");
+
+        // Optional HUD controls (ok if not present)
+        const hud = document.getElementById("hud");
+        const hudZoomIn = document.getElementById("hudZoomIn");
+        const hudZoomOut = document.getElementById("hudZoomOut");
+        const hudPrint = document.getElementById("hudPrint");
+        const hudDownload = document.getElementById("hudDownload");
+
+        // ===== State =====
+        const totalDocHeight = () => PAGES * PAGE_H + (PAGES - 1) * GAP;
+        docEl.style.height = `${totalDocHeight()}px`;
+
+        let zoom = 1;
+        const MIN_Z = 0.25,
+          MAX_Z = 4,
+          STEP = 0.1;
+        let fitMode = "page"; // 'page' | 'width' | null
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+        function applyZoom() {
+          docEl.style.transform = `scale(${zoom})`;
+          sizer.style.width = `${PAGE_W * zoom}px`;
+          sizer.style.height = `${totalDocHeight() * zoom}px`;
+          if (zoomPctEl) zoomPctEl.textContent = `${Math.round(zoom * 100)}%`;
+          if (zoomRange) zoomRange.value = String(zoom);
+        }
+
+        function setZoom(newZoom, opts = {}) {
+          const prev = zoom;
+          zoom = clamp(newZoom, MIN_Z, MAX_Z);
+
+          if (
+            opts.preservePoint &&
+            opts.clientX != null &&
+            opts.clientY != null
+          ) {
+            const rect = viewer.getBoundingClientRect();
+            const px = opts.clientX - rect.left + viewer.scrollLeft;
+            const py = opts.clientY - rect.top + viewer.scrollTop;
+            const rx = px / prev,
+              ry = py / prev;
+            applyZoom();
+            viewer.scrollLeft = rx * zoom - (opts.clientX - rect.left);
+            viewer.scrollTop = ry * zoom - (opts.clientY - rect.top);
+          } else {
+            applyZoom();
+          }
+          showHUD(); // nudge HUD visible on zoom changes
+        }
+
+        function currentPageIndex() {
+          const unscaledTop = viewer.scrollTop / zoom;
+          const span = PAGE_H + GAP;
+          return Math.max(
+            0,
+            Math.min(Math.round(unscaledTop / span), PAGES - 1)
+          );
+        }
+
+        function scrollToPageTop(idx) {
+          const top = idx * (PAGE_H + GAP) * zoom;
+          viewer.scrollTo({ top, left: 0, behavior: "auto" });
+        }
+
+        // ===== Fit modes =====
+        // SAFETY px leaves a little blank room below the page so page 2 never peeks.
+        const SAFETY = 36;
+
+        function fitPageAt(idx = 0) {
+          const cs = getComputedStyle(viewer);
+          const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+          const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+          const availW = viewer.clientWidth - padX;
+          const availH = viewer.clientHeight - padY;
+
+          const zW = availW / PAGE_W;
+          const zH = (availH - SAFETY) / PAGE_H; // subtract safety to prevent peek
+          const z = Math.min(zW, zH); // fit ONE page
+          setZoom(z);
+          scrollToPageTop(idx);
+        }
+
+        function fitWidthKeepPage() {
+          const cs = getComputedStyle(viewer);
+          const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+          const availW = viewer.clientWidth - padX;
+          const idx = currentPageIndex();
+          setZoom(availW / PAGE_W);
+          scrollToPageTop(idx);
+        }
+
+        // ===== Toolbar controls (if present) =====
+        if (zoomInBtn)
+          zoomInBtn.addEventListener("click", () => {
+            fitMode = null;
+            setZoom(zoom + STEP);
+          });
+        if (zoomOutBtn)
+          zoomOutBtn.addEventListener("click", () => {
+            fitMode = null;
+            setZoom(zoom - STEP);
+          });
+        if (zoomRange)
+          zoomRange.addEventListener("input", (e) => {
+            fitMode = null;
+            setZoom(parseFloat(e.target.value));
+          });
+
+        if (fitWidthBtn)
+          fitWidthBtn.addEventListener("click", () => {
+            fitMode = "width";
+            fitWidthKeepPage();
+          });
+        if (fitPageBtn)
+          fitPageBtn.addEventListener("click", () => {
+            fitMode = "page";
+            fitPageAt(currentPageIndex());
+          });
+
+        // Keyboard shortcuts
+        document.addEventListener("keydown", (e) => {
+          const mod = e.ctrlKey || e.metaKey;
+          if (mod && (e.key === "=" || e.key === "+")) {
+            e.preventDefault();
+            fitMode = null;
+            setZoom(zoom + STEP);
+          } else if (mod && e.key === "-") {
+            e.preventDefault();
+            fitMode = null;
+            setZoom(zoom - STEP);
+          } else if (mod && e.key === "0") {
+            e.preventDefault();
+            fitMode = null;
+            setZoom(1);
+          } else if (!mod && (e.key === "w" || e.key === "W")) {
+            e.preventDefault();
+            fitMode = "width";
+            fitWidthKeepPage();
+          } else if (!mod && (e.key === "p" || e.key === "P")) {
+            e.preventDefault();
+            fitMode = "page";
+            fitPageAt(currentPageIndex());
+          }
+        });
+
+        // Trackpad pinch / Ctrl+wheel zoom (preserve cursor focus point)
+        viewer.addEventListener(
+          "wheel",
+          (e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              fitMode = null;
+              const factor =
+                Math.sign(e.deltaY) > 0 ? zoom - STEP : zoom + STEP;
+              setZoom(factor, {
+                preservePoint: true,
+                clientX: e.clientX,
+                clientY: e.clientY,
+              });
+            }
+          },
+          { passive: false }
+        );
+
+        // Maintain chosen fit mode on resize
+        window.addEventListener("resize", () => {
+          if (fitMode === "page") fitPageAt(currentPageIndex());
+          if (fitMode === "width") fitWidthKeepPage();
+        });
+
+        // ===== HUD: always show on reload + when user’s active =====
+        let hudTimer = null;
+        function showHUD(ms = 2500) {
+          if (!hud) return;
+          hud.classList.add("show");
+          clearTimeout(hudTimer);
+          hudTimer = setTimeout(() => hud.classList.remove("show"), ms);
+        }
+        // Auto-show when user interacts
+        ["mousemove", "scroll"].forEach((evt) =>
+          viewer.addEventListener(evt, () => showHUD(), { passive: true })
+        );
+        document.addEventListener("keydown", () => showHUD(), {
+          passive: true,
+        });
+        // Wire HUD buttons if present
+        if (hudZoomIn)
+          hudZoomIn.addEventListener("click", () => {
+            fitMode = null;
+            setZoom(zoom + STEP);
+          });
+        if (hudZoomOut)
+          hudZoomOut.addEventListener("click", () => {
+            fitMode = null;
+            setZoom(zoom - STEP);
+          });
+        if (hudPrint) hudPrint.addEventListener("click", () => window.print());
+        if (hudDownload && hud?.dataset?.downloadUrl)
+          hudDownload.href = hud.dataset.downloadUrl;
+
+        // ===== Initial view: FULL first page (no page-2 peek) + HUD =====
+        window.addEventListener("load", () => {
+          fitMode = "page";
+          requestAnimationFrame(() => {
+            fitPageAt(0); // 0 = first page
+            showHUD(3000); // always pop the HUD on reload
+          });
+        });
+      })();
+    </script>
+  </body>
 </html>
